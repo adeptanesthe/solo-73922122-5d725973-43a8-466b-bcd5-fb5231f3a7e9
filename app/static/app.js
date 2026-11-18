@@ -306,6 +306,129 @@ $("#btn-reset").addEventListener("click", resetDemo);
 $("#article-filter").addEventListener("input", renderArticleList);
 $("#dlg-close").addEventListener("click", () => $("#article-dialog").close());
 
+/* ===================== 断句建议（句末标点恢复） ===================== */
+
+const segState = { result: null };
+
+function countContentChars(text) {
+  // 与后端一致：不计空白；标点也不计入“字数”提示（页面提示更贴近编辑口径）
+  let n = 0;
+  for (const ch of text) {
+    if (/\s/.test(ch)) continue;
+    n += 1;
+  }
+  return n;
+}
+
+function updateSegCounter() {
+  const n = countContentChars($("#seg-input").value);
+  const el = $("#seg-count");
+  el.textContent = n;
+  const counter = el.parentElement;
+  counter.classList.toggle("over", n > 350);
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+function renderSegAligned(original, insertions) {
+  /* 在原文的每个插入间隙渲染标记：
+     suggested -> 绿色“。”徽标；review -> 黄色虚线“？”待复核。
+     其余原文字符按顺序输出，保证字符与顺序完全不变。 */
+  const byIndex = new Map(insertions.map((it) => [it.source_index, it]));
+  let html = "";
+  for (let i = 0; i < original.length; i += 1) {
+    if (byIndex.has(i)) {
+      const it = byIndex.get(i);
+      if (it.confidence === "suggested") {
+        html += `<span class="gap-mark gap-suggested" title="建议在此间隙插入句号（证据分 ${it.evidence}）">。</span>`;
+      } else {
+        html += `<span class="gap-mark gap-review" title="证据不足，待人工复核（证据分 ${it.evidence}，低于阈值）">？</span>`;
+      }
+    }
+    html += escapeHtml(original[i]);
+  }
+  return html;
+}
+
+function renderSegTable(insertions) {
+  const body = $("#seg-table-body");
+  body.innerHTML = "";
+  insertions.forEach((it, idx) => {
+    const tr = document.createElement("tr");
+    tr.className = it.confidence === "suggested" ? "suggested-row" : "review-row";
+    const conf = it.confidence === "suggested"
+      ? '<span class="badge suggested">建议插入</span>'
+      : '<span class="badge review">待复核</span>';
+    tr.innerHTML = `
+      <td>${idx + 1}</td>
+      <td>${it.source_index}</td>
+      <td>${escapeHtml(it.left_char)}</td>
+      <td>${escapeHtml(it.right_char)}</td>
+      <td>${it.evidence.toFixed(3)}</td>
+      <td>${conf}</td>
+      <td>${it.segment_length}</td>`;
+    body.appendChild(tr);
+  });
+}
+
+function renderSegmentation(data) {
+  segState.result = data;
+  $("#seg-result").hidden = false;
+  const s = data.stats;
+  $("#seg-summary").innerHTML = `
+    学习语料：<b>${s.training_articles}</b> 篇文章正文、<b>${s.training_boundaries}</b> 个句末边界；
+    可信阈值 <b>${data.threshold}</b>（语料边界证据分 25 分位，整篇校准）。<br/>
+    原稿内容字 <b>${s.content_chars}</b> 个；DP 选定边界 <b>${s.boundary_total}</b> 处，
+    其中建议插入 <b>${data.suggested_count}</b> 处、待复核 <b>${data.review_count}</b> 处；
+    句段长度（内容字）：${data.segment_lengths.join(" / ")}；
+    约束：每段 15～90 字，仅在无标点的内容字间隙插入，已有标点不重复。`;
+  $("#seg-suggested").textContent = data.suggested_text;
+  $("#seg-aligned").innerHTML = renderSegAligned(data.original_text, data.insertions);
+  renderSegTable(data.insertions);
+}
+
+async function runSegmentation() {
+  const msg = $("#seg-msg");
+  msg.textContent = "";
+  msg.className = "msg";
+  const text = $("#seg-input").value;
+  try {
+    const data = await api("/api/segment", { method: "POST", body: JSON.stringify({ text }) });
+    renderSegmentation(data);
+  } catch (err) {
+    $("#seg-result").hidden = true;
+    showMsg(msg, err.message);
+  }
+}
+
+async function fillSample() {
+  // 取一篇内置文章，剥掉句末标点模拟“丢失句末标点的稿件”（保留逗号等句内标点）
+  const msg = $("#seg-msg");
+  try {
+    const a = await api("/api/articles/1");
+    const stripped = a.body.replace(/[。.．！!？?；;]/g, "");
+    $("#seg-input").value = stripped;
+    updateSegCounter();
+    showMsg(msg, "已填入示例（已去除句末标点，保留句内逗号）", true);
+  } catch (err) {
+    showMsg(msg, err.message);
+  }
+}
+
+$("#seg-input").addEventListener("input", updateSegCounter);
+$("#btn-segment").addEventListener("click", runSegmentation);
+$("#btn-seg-sample").addEventListener("click", fillSample);
+$("#btn-seg-clear").addEventListener("click", () => {
+  $("#seg-input").value = "";
+  $("#seg-result").hidden = true;
+  segState.result = null;
+  updateSegCounter();
+});
+
 refresh().catch((err) => {
   $("#job-status").textContent = `加载失败：${err.message}`;
 });

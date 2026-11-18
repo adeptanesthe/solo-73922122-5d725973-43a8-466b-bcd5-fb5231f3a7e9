@@ -10,7 +10,7 @@
 <header class="topbar">
   <h1>技术编辑选题推荐系统</h1>
   <div class="meta">
-    <span>字符 2~3 元 TF-IDF（仅文章拟合）· 余弦相关度 · 全局最优队列</span>
+    <span>字符 2~3 元 TF-IDF 推荐 · 句末标点学习断句 · 全局最优队列</span>
     <button id="btn-reset" class="btn btn-ghost">重置演示</button>
   </div>
 </header>
@@ -52,11 +52,49 @@
       <span id="reveal-msg" class="msg"></span>
     </div>
     <div class="generation-line" id="generation-line"></div>
+
+    <h2 style="margin-top:28px">4. 断句建议（恢复句末标点）</h2>
+    <p class="seg-hint">
+      粘贴 120～350 字、丢失句末标点的中文稿件。系统从内置 30 篇文章正文的句末标点
+      学习边界证据，结合 15～90 字句长做整篇断句；只在缺少标点的字符间隙插入句号，
+      原文已有标点不重复，证据不足的位置标记
+      <span class="legend review-legend">待复核</span> 而不强行加标点。
+    </p>
+    <label class="field-label" for="seg-input">原稿（句末标点缺失）</label>
+    <textarea id="seg-input" rows="7" placeholder="在此粘贴 120～350 字稿件……"></textarea>
+    <div class="seg-counter"><span id="seg-count">0</span> / 350 字（不含空白与标点，需 120～350）</div>
+    <div class="btn-row">
+      <button id="btn-segment" class="btn btn-primary">生成断句建议</button>
+      <button id="btn-seg-sample" class="btn">填入示例稿件</button>
+      <button id="btn-seg-clear" class="btn">清空</button>
+    </div>
+    <div id="seg-msg" class="msg"></div>
+    <div id="seg-result" class="seg-result" hidden>
+      <div class="seg-summary" id="seg-summary"></div>
+      <div class="seg-block">
+        <div class="seg-block-title">建议稿（仅在高可信间隙插入句号）</div>
+        <div id="seg-suggested" class="seg-text suggested-text"></div>
+      </div>
+      <div class="seg-block">
+        <div class="seg-block-title">原稿与插入间隙对照（<span class="dot suggested-dot"></span>建议插入
+          <span class="dot review-dot"></span>待复核）</div>
+        <div id="seg-aligned" class="seg-text aligned-text"></div>
+      </div>
+      <div class="seg-block">
+        <div class="seg-block-title">插入位置明细（对应原文间隙）</div>
+        <div class="seg-table-wrap">
+          <table class="seg-table">
+            <thead><tr><th>#</th><th>原文间隙位置</th><th>左字</th><th>右字</th><th>证据分</th><th>判定</th><th>句长</th></tr></thead>
+            <tbody id="seg-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- 右栏：文章库 -->
   <section class="panel">
-    <h2>4. 本地文章库（30 篇）</h2>
+    <h2>5. 本地文章库（30 篇）</h2>
     <input id="article-filter" class="filter-input" placeholder="按标题 / 主题 / 作者筛选……" />
     <div id="article-list" class="article-list"></div>
   </section>

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from . import database
 from .articles_data import ARTICLES, TOPICS
+from .segmenter import SegmentationError, get_boundary_model
 from .tfidf_model import get_model
 from .worker import get_worker
 
@@ -32,6 +33,10 @@ class ConditionIn(BaseModel):
 class ExclusionIn(BaseModel):
     article_id: int = Field(ge=1)
     compute_delay_ms: int = Field(default=0, ge=0, le=30000)
+
+
+class SegmentIn(BaseModel):
+    text: str = Field(description="缺少句末标点的中文稿件，120~350 字（不含空白）")
 
 def _validate_quotas(quotas: dict[str, int]) -> None:
     unknown = set(quotas) - set(TOPICS)
@@ -80,6 +85,11 @@ async def lifespan(app: FastAPI):
         get_model()
     except Exception:  # pragma: no cover
         log.exception("TF-IDF 预热失败")
+    # 预热断句证据模型（仅在 30 篇文章正文上统计，纯标准库，失败不阻断启动）
+    try:
+        get_boundary_model()
+    except Exception:  # pragma: no cover
+        log.exception("断句模型预热失败")
     get_worker().start()
     try:
         yield
@@ -175,3 +185,60 @@ def reset_demo() -> dict:
     """重置演示：清空揭示、排除与任务，世代回到 1。"""
     database.reset_all(DEFAULT_INTEREST, {t: 1 for t in TOPICS})
     return _status_payload()
+
+
+# ---------------- 断句建议（句末标点恢复） ----------------
+
+
+@app.get("/api/segment/info")
+def segment_info() -> dict:
+    """返回断句模型的校准信息（阈值来源、语料统计、约束常量），供页面展示。"""
+    model = get_boundary_model()
+    return {
+        "training_articles": model.article_count,
+        "training_boundaries": model.n_boundary,
+        "calibration_sample": model.calibration_sample,
+        "threshold": round(float(model.threshold), 4),
+        "review_quantile": 0.25,
+        "mean_sentence_len": round(float(model.mean_len), 2),
+        "mean_sentences_per_article": round(float(model.mean_sentences), 2),
+        "min_segment_len": 15,
+        "max_segment_len": 90,
+        "min_input_chars": 120,
+        "max_input_chars": 350,
+    }
+
+
+@app.post("/api/segment")
+def segment_manuscript(body: SegmentIn) -> dict:
+    """对缺少句末标点的稿件给出整篇断句建议。
+
+    只在两个内容字直接相邻、且没有任何标点的字符间隙插入句号；原文已有标点
+    （含残留句末标点）的位置绝不重复插入。证据不足的边界标记为待复核，
+    建议稿中不插入句号。
+    """
+    try:
+        result = get_boundary_model().segment(body.text)
+    except SegmentationError as exc:
+        raise HTTPException(422, str(exc))
+    return {
+        "original_text": result.original_text,
+        "suggested_text": result.suggested_text,
+        "threshold": result.threshold,
+        "segment_lengths": result.segment_lengths,
+        "stats": result.stats,
+        "insertions": [
+            {
+                "gap_id": ins.gap_id,
+                "source_index": ins.source_index,
+                "left_char": ins.left_char,
+                "right_char": ins.right_char,
+                "evidence": ins.evidence,
+                "confidence": ins.confidence,
+                "segment_length": ins.segment_length,
+            }
+            for ins in result.insertions
+        ],
+        "suggested_count": result.suggested_count,
+        "review_count": result.review_count,
+    }
